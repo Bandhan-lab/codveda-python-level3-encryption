@@ -82,5 +82,59 @@ class FileCryptoTests(unittest.TestCase):
                 decrypt_file(encrypted, restored, key)
 
 
+    def test_existing_output_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            source = root / "data.txt"
+            output = root / "data.enc"
+            source.write_bytes(b"secret")
+            output.write_bytes(b"existing")
+            with self.assertRaisesRegex(FileCryptoError, "Output file already exists"):
+                encrypt_file(source, output, Fernet.generate_key())
+            self.assertEqual(output.read_bytes(), b"existing")
+
+    def test_decrypt_same_input_and_output_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            encrypted = root / "data.enc"
+            key = Fernet.generate_key()
+            encrypt_file(root / "data.txt", encrypted, key) if False else None
+            encrypted.write_bytes(Fernet(key).encrypt(b"secret"))
+            with self.assertRaisesRegex(FileCryptoError, "must be different"):
+                decrypt_file(encrypted, encrypted, key)
+
+    def test_empty_file_round_trip(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            source = root / "empty.bin"
+            encrypted = root / "empty.bin.enc"
+            restored = root / "restored.bin"
+            key = Fernet.generate_key()
+            source.write_bytes(b"")
+            encrypt_file(source, encrypted, key)
+            decrypt_file(encrypted, restored, key)
+            self.assertEqual(restored.read_bytes(), b"")
+
+    def test_binary_file_round_trip(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            source = root / "binary.bin"
+            encrypted = root / "binary.bin.enc"
+            restored = root / "restored.bin"
+            key = Fernet.generate_key()
+            original = bytes(range(256))
+            source.write_bytes(original)
+            encrypt_file(source, encrypted, key)
+            decrypt_file(encrypted, restored, key)
+            self.assertEqual(restored.read_bytes(), original)
+
+    def test_existing_key_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            key_path = Path(temp_dir) / "secret.key"
+            generate_and_save_key(key_path)
+            with self.assertRaisesRegex(FileCryptoError, "Key file already exists"):
+                generate_and_save_key(key_path)
+
+
 if __name__ == "__main__":
     unittest.main()
