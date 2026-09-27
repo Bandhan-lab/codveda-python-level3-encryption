@@ -98,7 +98,6 @@ class FileCryptoTests(unittest.TestCase):
             root = Path(temp_dir)
             encrypted = root / "data.enc"
             key = Fernet.generate_key()
-            encrypt_file(root / "data.txt", encrypted, key) if False else None
             encrypted.write_bytes(Fernet(key).encrypt(b"secret"))
             with self.assertRaisesRegex(FileCryptoError, "must be different"):
                 decrypt_file(encrypted, encrypted, key)
