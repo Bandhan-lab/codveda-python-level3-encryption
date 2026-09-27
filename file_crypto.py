@@ -6,6 +6,7 @@ Codveda Technology Python Development Internship - Level 3 Task 2.
 from __future__ import annotations
 
 import argparse
+import os
 from pathlib import Path
 
 from cryptography.fernet import Fernet, InvalidToken
@@ -27,14 +28,27 @@ def save_key(key: bytes, key_path: Path) -> None:
         Fernet(key)
     except (TypeError, ValueError) as exc:
         raise FileCryptoError("Invalid Fernet key.") from exc
+
     key_path.parent.mkdir(parents=True, exist_ok=True)
-    key_path.write_bytes(key)
+    try:
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+        fd = os.open(key_path, flags, 0o600)
+        with os.fdopen(fd, "wb") as key_file:
+            key_file.write(key)
+    except FileExistsError as exc:
+        raise FileCryptoError(f"Key file already exists: {key_path}") from exc
+    except OSError as exc:
+        raise FileCryptoError(f"Could not save key file: {key_path}: {exc}") from exc
 
 
 def load_key(key_path: Path) -> bytes:
     if not key_path.is_file():
         raise FileCryptoError(f"Key file not found: {key_path}")
-    key = key_path.read_bytes().strip()
+    try:
+        key = key_path.read_bytes().strip()
+    except OSError as exc:
+        raise FileCryptoError(f"Could not read key file: {key_path}: {exc}") from exc
+
     try:
         Fernet(key)
     except (TypeError, ValueError) as exc:
@@ -46,38 +60,62 @@ def generate_and_save_key(key_path: Path) -> None:
     save_key(generate_key(), key_path)
 
 
-def encrypt_file(input_path: Path, output_path: Path, key: bytes) -> None:
+def _validate_paths(input_path: Path, output_path: Path) -> None:
     if not input_path.is_file():
         raise FileCryptoError(f"Input file not found: {input_path}")
     if input_path.resolve() == output_path.resolve():
         raise FileCryptoError("Input and output files must be different.")
+    if output_path.exists():
+        try:
+            if input_path.samefile(output_path):
+                raise FileCryptoError("Input and output files must be different.")
+        except OSError:
+            pass
+        raise FileCryptoError(f"Output file already exists: {output_path}")
+
+
+def _read_input(path: Path) -> bytes:
+    try:
+        return path.read_bytes()
+    except OSError as exc:
+        raise FileCryptoError(f"Could not read input file: {path}: {exc}") from exc
+
+
+def _write_output(path: Path, data: bytes) -> None:
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("xb") as output_file:
+            output_file.write(data)
+    except FileExistsError as exc:
+        raise FileCryptoError(f"Output file already exists: {path}") from exc
+    except OSError as exc:
+        raise FileCryptoError(f"Could not write output file: {path}: {exc}") from exc
+
+
+def encrypt_file(input_path: Path, output_path: Path, key: bytes) -> None:
+    _validate_paths(input_path, output_path)
 
     try:
         cipher = Fernet(key)
     except (TypeError, ValueError) as exc:
         raise FileCryptoError("Invalid Fernet key.") from exc
 
-    plaintext = input_path.read_bytes()
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_bytes(cipher.encrypt(plaintext))
+    plaintext = _read_input(input_path)
+    _write_output(output_path, cipher.encrypt(plaintext))
 
 
 def decrypt_file(input_path: Path, output_path: Path, key: bytes) -> None:
-    if not input_path.is_file():
-        raise FileCryptoError(f"Input file not found: {input_path}")
-    if input_path.resolve() == output_path.resolve():
-        raise FileCryptoError("Input and output files must be different.")
+    _validate_paths(input_path, output_path)
 
     try:
         cipher = Fernet(key)
-        plaintext = cipher.decrypt(input_path.read_bytes())
+        plaintext = cipher.decrypt(_read_input(input_path))
     except (TypeError, ValueError) as exc:
         raise FileCryptoError("Invalid Fernet key.") from exc
     except InvalidToken as exc:
         raise FileCryptoError("Decryption failed: invalid key or corrupted file.") from exc
 
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_bytes(plaintext)
+    _write_output(output_path, plaintext)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -116,10 +154,6 @@ def main() -> int:
 
     try:
         if args.command == "generate-key":
-            if args.key_file.exists():
-                parser.error(
-                    f"Key file already exists: {args.key_file} (refusing to overwrite)"
-                )
             generate_and_save_key(args.key_file)
             print(f"Key generated: {args.key_file}")
             print("Keep this key private. You need the same key to decrypt your files.")
